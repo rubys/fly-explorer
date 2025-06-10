@@ -4,8 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "node",
     "lib": ["ES2022"],
-    "outDir": "../dist/server",
-    "rootDir": "../..",
+    "outDir": "../dist",
+    "rootDir": "..",
     "strict": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -16,6 +16,6 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["**/*", "../../lib/**/*"],
-  "exclude": ["node_modules"]
+  "include": ["**/*", "../lib/**/*"],
+  "exclude": ["node_modules", "../node_modules", "../src", "../dist"]
 }
