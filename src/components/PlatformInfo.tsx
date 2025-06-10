@@ -24,7 +24,10 @@ interface PlatformStatus {
     created_at: string;
     impact: string;
   };
-  status?: string;
+  status?: string | {
+    description: string;
+    indicator: string;
+  };
   notices?: Array<{
     name: string;
     created_at: string;
@@ -291,11 +294,18 @@ export function PlatformInfo({ onClose }: PlatformInfoProps) {
                   {platformStatus ? (
                     <div className="platform-status">
                       <div className="status-summary">
-                        <div className={`status-indicator ${platformStatus.status || 'operational'}`}>
+                        <div className={`status-indicator ${
+                          typeof platformStatus.status === 'object' 
+                            ? platformStatus.status?.indicator || 'operational'
+                            : platformStatus.status || 'operational'
+                        }`}>
                           <span className="status-dot"></span>
                           <span className="status-text">
-                            {platformStatus.status === 'operational' ? 'All Systems Operational' : 
-                             platformStatus.status || 'Status Unknown'}
+                            {typeof platformStatus.status === 'object' 
+                              ? platformStatus.status?.description || 'All Systems Operational'
+                              : platformStatus.status === 'operational' 
+                                ? 'All Systems Operational' 
+                                : platformStatus.status || 'Status Unknown'}
                           </span>
                         </div>
                       </div>
