@@ -2436,3 +2436,214 @@
 .btn-primary:hover {
   background: #5b5fef;
 }
+
+/* IP Management Styles */
+.ips-management {
+  padding: 1rem;
+}
+
+.ips-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.ips-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 1.25rem;
+}
+
+.refresh-btn {
+  background: #6366f1;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background: #5b5fef;
+}
+
+.refresh-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.current-ips {
+  margin-bottom: 2rem;
+}
+
+.current-ips h4 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.no-ips {
+  text-align: center;
+  padding: 2rem;
+  color: #6b7280;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.ip-table {
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  overflow: hidden;
+  background: white;
+}
+
+.ip-table-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 120px;
+  gap: 1rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ip-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 120px;
+  gap: 1rem;
+  padding: 1rem;
+  border-bottom: 1px solid #e9ecef;
+  align-items: center;
+  transition: background-color 0.2s;
+}
+
+.ip-row:last-child {
+  border-bottom: none;
+}
+
+.ip-row:hover {
+  background: #f8f9fa;
+}
+
+.ip-address {
+  font-family: monospace;
+  font-weight: 500;
+  color: #374151;
+}
+
+.ip-type {
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.ip-region {
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.allocate-ip-section {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.allocate-ip-section h4 {
+  margin: 0 0 1rem 0;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.ip-form .form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.ip-form .form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.ip-form .form-group label {
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: #374151;
+  font-size: 0.875rem;
+}
+
+.ip-form .form-group select,
+.ip-form .form-group input {
+  padding: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  transition: border-color 0.2s;
+}
+
+.ip-form .form-group select:focus,
+.ip-form .form-group input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.ip-form .form-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.primary-btn {
+  background: #6366f1;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.primary-btn:hover:not(:disabled) {
+  background: #5b5fef;
+}
+
+.primary-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.danger-btn.small {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+
+.loading {
+  text-align: center;
+  padding: 1rem;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.private-badge {
+  display: inline-block;
+  background: #e5e7eb;
+  color: #374151;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}

@@ -96,6 +96,15 @@ function App() {
   const [showToolExplorer, setShowToolExplorer] = useState(false);
   const [showAppManagement, setShowAppManagement] = useState(false);
   const [showPlatformInfo, setShowPlatformInfo] = useState(false);
+  
+  // IP management state
+  const [ipAddresses, setIpAddresses] = useState<any[]>([]);
+  const [loadingIps, setLoadingIps] = useState(false);
+  const [ipForm, setIpForm] = useState({
+    ipType: 'v4',
+    network: '',
+    region: ''
+  });
 
   // Fetch organizations and platform regions on mount
   useEffect(() => {
@@ -468,6 +477,143 @@ function App() {
     }
   };
 
+  const fetchIpAddresses = async (appName: string) => {
+    setLoadingIps(true);
+    setError(null);
+    
+    try {
+      // Fetch both public and private IP addresses
+      const [publicResponse, privateResponse] = await Promise.all([
+        fetch(`/api/tools/fly-ips-list/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ arguments: { app: appName } })
+        }),
+        fetch(`/api/tools/fly-ips-private/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ arguments: { app: appName } })
+        })
+      ]);
+      
+      const allIps = [];
+      
+      // Process public IPs
+      if (publicResponse.ok) {
+        const publicResult = await publicResponse.json();
+        const publicIps = publicResult.result || [];
+        allIps.push(...publicIps);
+      }
+      
+      // Process private IPs
+      if (privateResponse.ok) {
+        const privateResult = await privateResponse.json();
+        const privateIps = privateResult.result || [];
+        // Ensure privateIps is an array before mapping
+        if (Array.isArray(privateIps)) {
+          // Convert string IPs to objects with proper structure
+          const markedPrivateIps = privateIps.map((ip: string) => ({
+            Address: ip,
+            Type: 'private_v6',
+            Region: 'Global',
+            IsPrivate: true
+          }));
+          allIps.push(...markedPrivateIps);
+        }
+      }
+      
+      setIpAddresses(allIps);
+    } catch (err) {
+      console.error('Error fetching IP addresses:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      setIpAddresses([]);
+    } finally {
+      setLoadingIps(false);
+    }
+  };
+
+  const allocateIpAddress = async (appName: string) => {
+    setLoadingIps(true);
+    setError(null);
+    
+    try {
+      let toolName = '';
+      const payload: any = { app: appName };
+      
+      // Determine the correct tool based on IP type
+      switch (ipForm.ipType) {
+        case 'v4':
+          toolName = 'fly-ips-allocate-v4';
+          payload.shared = true;
+          break;
+        case 'v4_dedicated':
+          toolName = 'fly-ips-allocate-v4';
+          payload.shared = false;
+          break;
+        case 'v6':
+          toolName = 'fly-ips-allocate-v6';
+          break;
+        case 'private_v6':
+          toolName = 'fly-ips-private';
+          break;
+        default:
+          throw new Error('Invalid IP type selected');
+      }
+      
+      if (ipForm.network) payload.network = ipForm.network;
+      if (ipForm.region) payload.region = ipForm.region;
+      
+      const response = await fetch(`/api/tools/${toolName}/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arguments: payload })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.details || 'Failed to allocate IP');
+      }
+      
+      // Refresh the IP list
+      await fetchIpAddresses(appName);
+    } catch (err) {
+      console.error('Error allocating IP address:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoadingIps(false);
+    }
+  };
+
+  const releaseIpAddress = async (appName: string, ipAddress: string) => {
+    if (!confirm(`Are you sure you want to release IP address ${ipAddress}?`)) {
+      return;
+    }
+    
+    setLoadingIps(true);
+    setError(null);
+    
+    try {
+      const response = await fetch(`/api/tools/fly-ips-release/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arguments: { app: appName, addresses: [ipAddress] } })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.details || 'Failed to release IP');
+      }
+      
+      // Refresh the IP list
+      await fetchIpAddresses(appName);
+    } catch (err) {
+      console.error('Error releasing IP address:', err);
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoadingIps(false);
+    }
+  };
+
   const fetchOrgDetails = async (orgSlug: string) => {
     setLoading(true);
     setError(null);
@@ -760,6 +906,17 @@ function App() {
                   }}
                 >
                   Logs
+                </button>
+                <button
+                  className={activeTab === 'ips' ? 'active' : ''}
+                  onClick={() => {
+                    setActiveTab('ips');
+                    if (selectedApp && ipAddresses.length === 0) {
+                      fetchIpAddresses(selectedApp);
+                    }
+                  }}
+                >
+                  IP Addresses
                 </button>
               </div>
               
@@ -1331,6 +1488,144 @@ function App() {
                           ))}
                         </div>
                       )}
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'ips' && (
+                  <div className="ips-management">
+                    <div className="ips-header">
+                      <h3>IP Addresses for {selectedApp}</h3>
+                      <button
+                        className="refresh-btn"
+                        onClick={() => selectedApp && fetchIpAddresses(selectedApp)}
+                        disabled={loadingIps}
+                      >
+                        {loadingIps ? 'Loading...' : 'Refresh'}
+                      </button>
+                    </div>
+
+                    {error && (
+                      <div className="error-message">
+                        <strong>Error:</strong> {error}
+                      </div>
+                    )}
+
+                    <div className="current-ips">
+                      <h4>Current IP Addresses</h4>
+                      {loadingIps && <div className="loading">Loading IP addresses...</div>}
+                      {!loadingIps && ipAddresses.length === 0 && (
+                        <div className="no-ips">
+                          <p>No IP addresses allocated for this app.</p>
+                        </div>
+                      )}
+                      {!loadingIps && ipAddresses.length > 0 && (
+                        <div className="ip-table">
+                          <div className="ip-table-header">
+                            <span>IP Address</span>
+                            <span>Type</span>
+                            <span>Region</span>
+                            <span>Actions</span>
+                          </div>
+                          {ipAddresses.map((ip: any, index: number) => {
+                            // Extract IP address from various possible formats
+                            let ipAddress = '';
+                            if (typeof ip === 'string') {
+                              ipAddress = ip;
+                            } else if (ip.Address) {
+                              ipAddress = ip.Address;
+                            } else if (ip.address) {
+                              ipAddress = ip.address;
+                            } else if (ip.raw_text) {
+                              // For private IPs that might have raw_text containing the IP
+                              ipAddress = ip.raw_text;
+                            } else {
+                              ipAddress = 'Unknown';
+                            }
+                            
+                            const ipType = ip.Type || ip.type || 'Unknown';
+                            const isPrivate = ip.IsPrivate || ipType.toLowerCase().includes('private');
+                            
+                            return (
+                              <div key={index} className="ip-row">
+                                <span className="ip-address">{ipAddress}</span>
+                                <span className="ip-type">
+                                  {ipType}
+                                  {isPrivate && <span className="private-badge">Private</span>}
+                                </span>
+                                <span className="ip-region">{ip.Region || ip.region || 'Global'}</span>
+                                <button
+                                  onClick={() => selectedApp && releaseIpAddress(selectedApp, ipAddress)}
+                                  disabled={loadingIps || isPrivate}
+                                  className="danger-btn small"
+                                  title={isPrivate ? "Private IPs cannot be released" : "Release this IP address"}
+                                >
+                                  {isPrivate ? 'N/A' : 'Release'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="allocate-ip-section">
+                      <h4>Allocate New IP Address</h4>
+                      <div className="ip-form">
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>IP Type</label>
+                            <select
+                              value={ipForm.ipType}
+                              onChange={(e) => setIpForm(prev => ({ ...prev, ipType: e.target.value }))}
+                            >
+                              <option value="v4">IPv4 (Shared)</option>
+                              <option value="v4_dedicated">IPv4 (Dedicated)</option>
+                              <option value="v6">IPv6</option>
+                              <option value="private_v6">Private IPv6</option>
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label>Network (optional)</label>
+                            <input
+                              type="text"
+                              value={ipForm.network}
+                              onChange={(e) => setIpForm(prev => ({ ...prev, network: e.target.value }))}
+                              placeholder="Custom network"
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Region (optional)</label>
+                            <select
+                              value={ipForm.region}
+                              onChange={(e) => setIpForm(prev => ({ ...prev, region: e.target.value }))}
+                            >
+                              <option value="">Any region</option>
+                              {platformRegions.map((region, index) => {
+                                const regionCode = region.code || region.Code || region;
+                                const regionName = region.name || region.Name || region;
+                                return (
+                                  <option key={regionCode || index} value={regionCode}>
+                                    {typeof region === 'string' ? region : `${regionName} (${regionCode})`}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="form-actions">
+                          <button
+                            onClick={() => selectedApp && allocateIpAddress(selectedApp)}
+                            disabled={loadingIps}
+                            className="primary-btn"
+                          >
+                            {loadingIps ? 'Allocating...' : 'Allocate IP'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
