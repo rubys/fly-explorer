@@ -15,7 +15,8 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static files from the dist directory in production
-const distPath = path.join(__dirname, '..', '..');
+// In npm package: __dirname is dist/server, we want to serve from dist/ (parent dir)
+const distPath = path.join(__dirname, '..');
 app.use(express.static(distPath));
 
 let mcpClient: FlyctlMCPClient | null = null;
