@@ -24,6 +24,16 @@ A comprehensive web-based dashboard for managing Fly.io infrastructure using Mod
   - Destroy machines with force options
 - **Detailed Monitoring**: Comprehensive machine information including hardware specs, network details, event logs, and health checks
 
+### **Network & IP Address Management**
+- **Complete IP Management**: Comprehensive IP address allocation and management:
+  - Allocate shared or dedicated IPv4 addresses
+  - Allocate public IPv6 addresses
+  - Allocate private IPv6 addresses for internal networking
+  - Regional IP allocation with dropdown selection
+  - View all assigned IP addresses (public and private) in organized table
+  - Release public IP addresses when no longer needed
+- **Network Configuration**: Custom network specification for advanced setups
+
 ### **Storage & Configuration Management**
 - **Volume Management**: Create, extend, delete, and monitor persistent volumes
 - **Secrets Management**: Secure environment variable handling with deployment tracking
@@ -160,6 +170,14 @@ npm start      # Start production server
 - `POST /api/apps/:app/machines/:id/cordon` - Cordon machine
 - `POST /api/apps/:app/machines/:id/uncordon` - Uncordon machine
 
+### **IP Address Management**
+- `POST /api/tools/fly-ips-list/execute` - List all IP addresses (public)
+- `POST /api/tools/fly-ips-private/execute` - List private IP addresses
+- `POST /api/tools/fly-ips-allocate-v4/execute` - Allocate IPv4 address (shared/dedicated)
+- `POST /api/tools/fly-ips-allocate-v6/execute` - Allocate public IPv6 address
+- `POST /api/tools/fly-ips-private/execute` - Allocate private IPv6 address
+- `POST /api/tools/fly-ips-release/execute` - Release IP addresses
+
 ### **Storage & Configuration**
 - `GET /api/apps/:app/volumes` - List volumes
 - `POST /api/apps/:app/volumes` - Create volume
@@ -189,8 +207,9 @@ npm start      # Start production server
 - **Resource Optimization**: Monitor and adjust machine sizes and regional deployment
 
 ### **DevOps & Infrastructure**
-- **Infrastructure as Code**: Programmatic machine and volume management
+- **Infrastructure as Code**: Programmatic machine, volume, and IP management
 - **Multi-Organization Management**: Handle multiple clients or projects
+- **Network Management**: IP allocation and regional networking configuration
 - **Operational Monitoring**: Track application health and performance
 - **Disaster Recovery**: Machine cloning and cross-region deployment
 
