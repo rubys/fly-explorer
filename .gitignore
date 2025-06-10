@@ -10,6 +10,12 @@ dist/
 build/
 .vite/
 
+# Compiled TypeScript files in source directories
+lib/*.js
+lib/*.d.ts
+lib/*.js.map
+lib/*.d.ts.map
+
 # Environment variables
 .env
 .env.local

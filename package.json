@@ -5,7 +5,7 @@
   "main": "dist/server/index.js",
   "type": "module",
   "bin": {
-    "fly-explorer": "./bin/fly-explorer.js"
+    "fly-explorer": "bin/fly-explorer.js"
   },
   "files": [
     "dist/",
