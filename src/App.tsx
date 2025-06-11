@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import { MachineCreateForm } from './components/MachineCreateForm';
 import { MachineLifecycle } from './components/MachineLifecycle';
@@ -80,6 +80,10 @@ function App() {
   const [logs, setLogs] = useState<any[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logFilters, setLogFilters] = useState({ machine: '', region: '', lines: '100' });
+  const [logProgress, setLogProgress] = useState<string[]>([]);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+  const logsListRef = useRef<HTMLDivElement>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [machineOperation, setMachineOperation] = useState<{ [key: string]: string }>({});
   const [secretsOperation, setSecretsOperation] = useState<string>('');
   const [newSecret, setNewSecret] = useState({ key: '', value: '' });
@@ -105,6 +109,147 @@ function App() {
     network: '',
     region: ''
   });
+
+  // Utility functions for log formatting (same as server-side)
+  const extractLogLevel = (logLine: string): string => {
+    const line = logLine.toLowerCase();
+    if (line.includes('error') || line.includes('err')) return 'error';
+    if (line.includes('warn') || line.includes('warning')) return 'warn';
+    if (line.includes('info')) return 'info';
+    if (line.includes('debug')) return 'debug';
+    return 'info';
+  };
+
+  const escapeHtml = (text: string): string => {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  const ansiToHtml = (text: string): string => {
+    // Remove ANSI escape sequences and convert to HTML
+    const ansiRegex = /\x1b\[([0-9;]*)m/g;
+    let html = '';
+    let lastIndex = 0;
+    let currentStyles: string[] = [];
+    
+    const ansiColorMap: Record<string, string> = {
+      // Foreground colors
+      '30': 'color: #000000',     // black
+      '31': 'color: #e74c3c',     // red
+      '32': 'color: #2ecc71',     // green
+      '33': 'color: #f1c40f',     // yellow
+      '34': 'color: #3498db',     // blue
+      '35': 'color: #9b59b6',     // magenta
+      '36': 'color: #1abc9c',     // cyan
+      '37': 'color: #ecf0f1',     // white
+      '90': 'color: #7f8c8d',     // bright black (gray)
+      '91': 'color: #ff6b6b',     // bright red
+      '92': 'color: #51cf66',     // bright green
+      '93': 'color: #ffd93d',     // bright yellow
+      '94': 'color: #74c0fc',     // bright blue
+      '95': 'color: #d0bfff',     // bright magenta
+      '96': 'color: #66d9ef',     // bright cyan
+      '97': 'color: #ffffff',     // bright white
+      // Background colors
+      '40': 'background-color: #000000',     // black
+      '41': 'background-color: #e74c3c',     // red
+      '42': 'background-color: #2ecc71',     // green
+      '43': 'background-color: #f1c40f',     // yellow
+      '44': 'background-color: #3498db',     // blue
+      '45': 'background-color: #9b59b6',     // magenta
+      '46': 'background-color: #1abc9c',     // cyan
+      '47': 'background-color: #ecf0f1',     // white
+      '100': 'background-color: #7f8c8d',    // bright black (gray)
+      '101': 'background-color: #ff6b6b',    // bright red
+      '102': 'background-color: #51cf66',    // bright green
+      '103': 'background-color: #ffd93d',    // bright yellow
+      '104': 'background-color: #74c0fc',    // bright blue
+      '105': 'background-color: #d0bfff',    // bright magenta
+      '106': 'background-color: #66d9ef',    // bright cyan
+      '107': 'background-color: #ffffff',    // bright white
+      // Text formatting
+      '1': 'font-weight: bold',
+      '2': 'opacity: 0.7',
+      '3': 'font-style: italic',
+      '4': 'text-decoration: underline',
+    };
+    
+    let match;
+    while ((match = ansiRegex.exec(text)) !== null) {
+      // Add text before the ANSI code
+      if (match.index > lastIndex) {
+        const textBefore = text.slice(lastIndex, match.index);
+        if (currentStyles.length > 0) {
+          html += `<span style="${currentStyles.join('; ')}">${escapeHtml(textBefore)}</span>`;
+        } else {
+          html += escapeHtml(textBefore);
+        }
+      }
+      
+      // Parse the ANSI code
+      const codes = match[1].split(';');
+      for (const code of codes) {
+        if (code === '0' || code === '') {
+          // Reset all styles
+          currentStyles = [];
+        } else if (ansiColorMap[code]) {
+          // Add or update style
+          const style = ansiColorMap[code];
+          const property = style.split(':')[0];
+          
+          // Remove existing style of the same property
+          currentStyles = currentStyles.filter(s => !s.startsWith(property));
+          currentStyles.push(style);
+        }
+      }
+      
+      lastIndex = match.index + match[0].length;
+    }
+    
+    // Add remaining text
+    if (lastIndex < text.length) {
+      const remainingText = text.slice(lastIndex);
+      if (currentStyles.length > 0) {
+        html += `<span style="${currentStyles.join('; ')}">${escapeHtml(remainingText)}</span>`;
+      } else {
+        html += escapeHtml(remainingText);
+      }
+    }
+    
+    return html;
+  };
+
+  // Auto-scroll to bottom when new logs are added
+  useEffect(() => {
+    const container = logsContainerRef.current;
+    if (container && logs.length > 0 && shouldAutoScroll) {
+      // Use setTimeout to ensure DOM has fully updated
+      setTimeout(() => {
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+          
+          // Also try scrolling the last log entry into view
+          const lastLogEntry = container.querySelector('.log-entry:last-child');
+          if (lastLogEntry) {
+            lastLogEntry.scrollIntoView({ behavior: 'auto', block: 'end' });
+          }
+        }
+      }, 0);
+    }
+  }, [logs, shouldAutoScroll]);
+
+  // Handle scroll events to detect if user manually scrolled up
+  const handleScroll = () => {
+    const container = logsContainerRef.current;
+    if (container) {
+      const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 50;
+      setShouldAutoScroll(isAtBottom);
+    }
+  };
 
   // Fetch organizations and platform regions on mount
   useEffect(() => {
@@ -187,26 +332,95 @@ function App() {
     setResourceDetails(details);
   };
 
-  const fetchLogs = async (app: string, filters: any = {}) => {
+  const fetchLogs = async (app: string, filters: any = {}, isRetry: boolean = false) => {
     setLogsLoading(true);
+    if (isRetry) {
+      // For retries, clear the window completely and start fresh
+      setLogProgress([]);
+      setLogs([]);
+      console.log('Clearing log window for retry');
+    } else {
+      setLogProgress([]); // Clear previous progress messages
+      setLogs([]); // Clear previous logs
+    }
+    setShouldAutoScroll(true); // Reset auto-scroll when starting new log fetch
+    
     try {
       const params = new URLSearchParams();
       if (filters.machine) params.append('machine', filters.machine);
       if (filters.region) params.append('region', filters.region);
       if (filters.lines) params.append('lines', filters.lines);
       
-      const response = await fetch(`/api/apps/${app}/logs?${params}`);
-      if (response.ok) {
-        const logsData = await response.json();
-        setLogs(logsData);
-      } else {
-        console.error('Failed to fetch logs');
-        setLogs([]);
-      }
+      // Try to use streaming first
+      params.append('stream', 'true');
+      
+      const eventSource = new EventSource(`/api/apps/${app}/logs?${params}`);
+      let currentLogs: any[] = [];
+      
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        switch (data.type) {
+          case 'connected':
+            // Connection established
+            break;
+            
+          case 'progress':
+            // Add progress message as a log entry, formatted exactly like a regular log
+            const rawMessage = data.message || data.params?.message || 'Processing...';
+            const progressLogEntry = {
+              id: `progress-${Date.now()}-${Math.random()}`,
+              timestamp: new Date().toISOString(),
+              message: rawMessage,
+              messageHtml: ansiToHtml(rawMessage), // Apply ANSI conversion like regular logs
+              level: extractLogLevel(rawMessage) // Extract log level like regular logs
+            };
+            currentLogs.push(progressLogEntry);
+            setLogs([...currentLogs]);
+            break;
+            
+          case 'complete':
+            // Add the final logs to the existing logs (don't replace progress entries)
+            const finalLogs = data.logs || [];
+            if (finalLogs.length > 0) {
+              // Append final logs to current logs instead of replacing
+              const updatedLogs = [...currentLogs, ...finalLogs];
+              setLogs(updatedLogs);
+            }
+            setLogsLoading(false);
+            eventSource.close();
+            break;
+            
+          case 'error':
+            console.error('Error fetching logs:', data.error, data.details);
+            // Don't clear logs on error - keep the progress messages that were already shown
+            setLogsLoading(false);
+            eventSource.close();
+            
+            // Auto-retry after a short delay when there's a server error (likely timeout)
+            console.log('Server error in log request, retrying in 2 seconds...');
+            setTimeout(() => {
+              console.log('Retrying log request after server error...');
+              fetchLogs(app, filters, true); // Mark as retry to clear window
+            }, 2000);
+            break;
+        }
+      };
+      
+      eventSource.onerror = async (error) => {
+        eventSource.close();
+        setLogsLoading(false);
+        
+        // Auto-retry after a short delay when there's an error (likely timeout)
+        console.log('Log request failed/timed out, retrying in 2 seconds...');
+        setTimeout(() => {
+          console.log('Retrying log request...');
+          fetchLogs(app, filters, true); // Mark as retry to clear window
+        }, 2000);
+      };
     } catch (err) {
       console.error('Error fetching logs:', err);
       setLogs([]);
-    } finally {
       setLogsLoading(false);
     }
   };
@@ -1462,18 +1676,25 @@ function App() {
                       </div>
                     </div>
                     
-                    <div className="logs-container">
-                      {logsLoading && <div className="logs-loading">Loading logs...</div>}
+                    <div className="logs-container" ref={logsContainerRef} onScroll={handleScroll}>
+                      {logsLoading && logs.length === 0 && (
+                        <div className="logs-loading">
+                          <div>Loading logs...</div>
+                        </div>
+                      )}
                       {!logsLoading && logs.length === 0 && (
                         <div className="logs-empty">
                           <p>No logs available for the selected filters.</p>
                           <p>Try adjusting the filters or check if the application is running.</p>
                         </div>
                       )}
-                      {!logsLoading && logs.length > 0 && (
+                      {logs.length > 0 && (
                         <div className="logs-list">
                           {logs.map((log: any) => (
-                            <div key={log.id} className={`log-entry log-${log.level}`}>
+                            <div 
+                              key={log.id} 
+                              className={`log-entry log-${log.level}`}
+                            >
                               <span className="log-timestamp">
                                 {new Date(log.timestamp).toLocaleTimeString()}
                               </span>

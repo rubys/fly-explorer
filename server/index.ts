@@ -3,7 +3,9 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { randomUUID } from 'crypto';
 import { FlyctlMCPClient } from '../lib/flyctl-client.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,13 +37,32 @@ async function initializeMCPClient() {
 }
 
 // Helper function to call MCP tools
-async function callTool(toolName: string, args: any, parseJson: boolean = true): Promise<any> {
+async function callTool(toolName: string, args: any, parseJson: boolean = true, options?: any): Promise<any> {
   if (!mcpClient) {
     throw new Error('MCP client not initialized');
   }
   
   const client = mcpClient.rawClient;
-  const response = await client.callTool({ name: toolName, arguments: args });
+  const params: any = { name: toolName, arguments: args };
+  
+  // Add _meta if provided in options
+  if (options?._meta) {
+    params._meta = options._meta;
+  }
+  
+  // Use request instead of callTool to avoid schema validation issues
+  const request = {
+    method: 'tools/call' as const,
+    params: params
+  };
+  
+  let response;
+  if (toolName === 'fly-logs') {
+    // Pass timeout as request option for fly-logs (24 hours)
+    response = await client.request(request, CallToolResultSchema, { timeout: 24 * 60 * 60 * 1000 });
+  } else {
+    response = await client.request(request, CallToolResultSchema);
+  }
   
   if (response.content && Array.isArray(response.content) && response.content.length > 0) {
     const content = response.content[0];
@@ -60,6 +81,55 @@ async function callTool(toolName: string, args: any, parseJson: boolean = true):
   }
   
   throw new Error('Invalid response from tool');
+}
+
+// Helper function to call MCP tools with notification support
+async function callToolWithNotifications(
+  toolName: string, 
+  args: any, 
+  progressToken: string,
+  notificationCallback?: (notification: any) => void,
+  timeoutMs?: number
+): Promise<any> {
+  if (!mcpClient) {
+    throw new Error('MCP client not initialized');
+  }
+  
+  // Store the original progress handler
+  const originalProgressHandler = mcpClient.onProgress;
+  
+  // Set up progress callback for this specific token
+  mcpClient.onProgress = (progress) => {
+    // Only handle notifications for our specific token
+    if (progress.progressToken === progressToken && notificationCallback) {
+      notificationCallback(progress);
+    }
+    // Also call the original handler if it exists
+    if (originalProgressHandler) {
+      originalProgressHandler(progress);
+    }
+  };
+  
+  try {
+    const options = {
+      _meta: {
+        progressToken: progressToken
+      }
+    };
+    
+    let response;
+    if (timeoutMs) {
+      // Create a timeout promise that never rejects for fly-logs
+      response = await callTool(toolName, args, false, options);
+    } else {
+      response = await callTool(toolName, args, false, options);
+    }
+    
+    return response;
+  } finally {
+    // Restore the original handler
+    mcpClient.onProgress = originalProgressHandler;
+  }
 }
 
 // API Routes
@@ -371,19 +441,83 @@ function parseReleasesText(text: string) {
 }
 
 app.get('/api/apps/:app/logs', async (req, res) => {
+  const { machine, region, lines, stream } = req.query;
+  
+  // If not streaming, use the regular response
+  if (stream !== 'true') {
+    try {
+      const params: any = { app: req.params.app };
+      if (machine) params.machine = machine;
+      if (region) params.region = region;
+      
+      const logs = await callTool('fly-logs', params, false); // Don't parse as JSON
+      
+      // Split logs into individual entries
+      const logLines = logs.split('\n')
+        .filter((line: string) => line.trim())
+        .slice(-(parseInt(lines as string) || 100)) // Get last N lines
+        .map((line: string, index: number) => ({
+          id: index,
+          timestamp: extractTimestamp(line),
+          message: line,
+          messageHtml: ansiToHtml(line),
+          level: extractLogLevel(line)
+        }));
+      
+      res.json(logLines);
+    } catch (error) {
+      console.error('Error fetching logs:', error);
+      res.status(500).json({ error: 'Failed to fetch logs', details: error instanceof Error ? error.message : 'Unknown error' });
+    }
+    return;
+  }
+  
+  // Set up SSE for streaming logs with progress
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no' // Disable nginx buffering
+  });
+  
+  // Disable timeout for this specific request
+  req.setTimeout(0);
+  res.setTimeout(0);
+  
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+  
   try {
-    const { machine, region, lines } = req.query;
-    
-    const params: any = { app: req.params.app };
+    const params: any = { 
+      app: req.params.app
+    };
     if (machine) params.machine = machine;
     if (region) params.region = region;
     
-    const logs = await callTool('fly-logs', params, false); // Don't parse as JSON
+    // Generate progress token
+    const progressToken = randomUUID();
     
-    // Split logs into individual entries
+    // Track progress messages
+    const progressMessages: string[] = [];
+    
+    // Call tool with notification support (timeout resets on progress)
+    const logs = await callToolWithNotifications('fly-logs', params, progressToken, (notification) => {
+      const message = notification.message || notification.params?.message;
+      if (message) {
+        progressMessages.push(message);
+        // Send progress notification via SSE
+        res.write(`data: ${JSON.stringify({ 
+          type: 'progress', 
+          message: message,
+          params: notification
+        })}\n\n`);
+      }
+    });
+    
+    // Process the final logs
     const logLines = logs.split('\n')
       .filter((line: string) => line.trim())
-      .slice(-(parseInt(lines as string) || 100)) // Get last N lines
+      .slice(-(parseInt(lines as string) || 100))
       .map((line: string, index: number) => ({
         id: index,
         timestamp: extractTimestamp(line),
@@ -392,10 +526,22 @@ app.get('/api/apps/:app/logs', async (req, res) => {
         level: extractLogLevel(line)
       }));
     
-    res.json(logLines);
+    // Send the complete logs
+    res.write(`data: ${JSON.stringify({ 
+      type: 'complete', 
+      logs: logLines,
+      progressMessages: progressMessages
+    })}\n\n`);
+    
+    res.end();
   } catch (error) {
     console.error('Error fetching logs:', error);
-    res.status(500).json({ error: 'Failed to fetch logs', details: error instanceof Error ? error.message : 'Unknown error' });
+    res.write(`data: ${JSON.stringify({ 
+      type: 'error', 
+      error: 'Failed to fetch logs', 
+      details: error instanceof Error ? error.message : 'Unknown error' 
+    })}\n\n`);
+    res.end();
   }
 });
 

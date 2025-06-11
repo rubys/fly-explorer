@@ -134,8 +134,10 @@
 
 .main-content {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 2rem;
+  display: flex;
+  flex-direction: column;
 }
 
 .welcome {
@@ -154,11 +156,20 @@
   color: #6b7280;
 }
 
+.app-details,
+.org-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .app-details h2,
 .org-details h2 {
   margin-top: 0;
   margin-bottom: 1.5rem;
   color: #111827;
+  flex-shrink: 0;
 }
 
 .org-slug {
@@ -300,6 +311,7 @@
   gap: 0.5rem;
   border-bottom: 2px solid #e5e7eb;
   margin-bottom: 1.5rem;
+  flex-shrink: 0;
 }
 
 .tabs button {
@@ -326,6 +338,10 @@
 
 .tab-content {
   animation: fadeIn 0.3s ease-in-out;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 @keyframes fadeIn {
@@ -635,7 +651,8 @@
 .logs-viewer {
   display: flex;
   flex-direction: column;
-  height: 600px;
+  flex: 1;
+  min-height: 0; /* Allow flex shrinking */
 }
 
 .logs-controls {
@@ -2646,4 +2663,58 @@
   margin-left: 6px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* Log Progress Styles */
+.log-progress {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  background: #f3f4f6;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.progress-message {
+  color: #6b7280;
+  padding: 0.25rem 0;
+  font-style: italic;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.logs-loading {
+  text-align: center;
+  padding: 2rem;
+  color: #6b7280;
+}
+
+/* Progress Log Entry Styles */
+.log-progress-entry {
+  background: #f0f9ff;
+  border-left: 3px solid #0ea5e9;
+  animation: pulseProgress 1.5s ease-in-out infinite;
+}
+
+.log-level-progress {
+  background: #0ea5e9 !important;
+  color: white !important;
+}
+
+@keyframes pulseProgress {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
