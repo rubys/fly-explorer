@@ -59,7 +59,10 @@ async function callTool(toolName: string, args: any, parseJson: boolean = true, 
   let response;
   if (toolName === 'fly-logs') {
     // Pass timeout as request option for fly-logs (24 hours)
-    response = await client.request(request, CallToolResultSchema, { timeout: 24 * 60 * 60 * 1000 });
+    response = await client.request(request, CallToolResultSchema, { 
+      timeout: 24 * 60 * 60 * 1000,
+      resetTimeoutOnProgress: true
+    });
   } else {
     response = await client.request(request, CallToolResultSchema);
   }

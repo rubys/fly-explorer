@@ -240,25 +240,6 @@ Access to all flyctl capabilities through a visual interface:
 - **Validation**: Input validation and type checking throughout
 - **Rollback Information**: Clear indication of irreversible operations
 
-## ⚠️ Known Issues
-
-### **MCP SDK Timeout Bug**
-The MCP TypeScript SDK has a known issue where client-level timeout configuration options (`requestTimeoutMs` and `resetTimeoutOnProgress`) are ignored. This affects long-running operations like log streaming.
-
-- **Issue**: https://github.com/modelcontextprotocol/typescript-sdk/issues/245
-- **Current Workaround**: 
-  - Set 24-hour timeout per tool call for fly-logs specifically
-  - Implement automatic retry with window reset on timeout
-  - Progress notifications continue to work during retries
-
-This will be resolved when the SDK bug is fixed.
-
-### **Log Streaming Behavior**
-Due to the SDK timeout limitation:
-- Log streaming may timeout after 60 seconds regardless of activity
-- The interface automatically retries and clears the window when this happens
-- Progress messages are preserved during each attempt
-- Users see a continuous stream of logs with periodic resets
 
 ## 🤝 Contributing
 
