@@ -185,6 +185,28 @@ async function initializeMCPClient() {
       console.log('flyctl is available');
     }
     
+    // Check authentication status - this will prompt for login if needed
+    console.log('Checking Fly.io authentication...');
+    try {
+      const { stdout } = await execAsync('flyctl auth whoami');
+      const email = stdout.trim();
+      if (email && email.includes('@')) {
+        console.log(`Authenticated as: ${email}`);
+      } else {
+        console.log('Authentication successful');
+      }
+    } catch (authError: any) {
+      // If auth whoami fails, it might be because user needs to log in
+      if (authError.message.includes('not logged in') || authError.code === 1) {
+        console.log('Not logged in to Fly.io. Please log in using the prompt that appears.');
+        console.log('After logging in, restart the application.');
+        // The flyctl auth whoami command will have already shown the login prompt
+        process.exit(1);
+      } else {
+        console.error('Authentication check failed:', authError.message);
+      }
+    }
+    
     mcpClient = new FlyctlMCPClient();
     // Use flyctl from system PATH
     await mcpClient.connect();

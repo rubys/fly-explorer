@@ -17,6 +17,7 @@ console.log('🚀 Starting Fly Explorer...');
 console.log(`📍 Server will be available at http://localhost:${port}`);
 console.log('🌐 Browser will open automatically when ready');
 console.log('🔍 Checking for flyctl... (will install automatically if needed)');
+console.log('🔐 Will verify Fly.io authentication (login prompt may appear)');
 console.log('📖 Documentation: https://github.com/rubys/fly-explorer#readme');
 console.log('');
 
