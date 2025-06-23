@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { randomUUID } from 'crypto';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { FlyctlMCPClient } from '../lib/flyctl-client.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
@@ -1085,7 +1086,385 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', mcpConnected: mcpClient !== null });
 });
 
+// Settings management
+const settingsFile = path.join(__dirname, 'settings.json');
+
+let settings = {
+  provider: 'openai' as 'openai' | 'anthropic',
+  apiKey: ''
+};
+
+// Function to load settings from file
+function loadSettings() {
+  try {
+    if (existsSync(settingsFile)) {
+      const data = readFileSync(settingsFile, 'utf8');
+      const savedSettings = JSON.parse(data);
+      if (savedSettings.provider && savedSettings.apiKey) {
+        settings.provider = savedSettings.provider;
+        settings.apiKey = savedSettings.apiKey;
+        console.log('Loaded settings from file:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
+        return;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load settings from file:', error);
+  }
+  
+  // Fallback to environment variables if no saved settings
+  if (process.env.OPENAI_API_KEY) {
+    settings.provider = 'openai';
+    settings.apiKey = process.env.OPENAI_API_KEY;
+    console.log('Loaded settings from environment: OpenAI');
+  } else if (process.env.ANTHROPIC_API_KEY) {
+    settings.provider = 'anthropic';
+    settings.apiKey = process.env.ANTHROPIC_API_KEY;
+    console.log('Loaded settings from environment: Anthropic');
+  } else {
+    console.log('No saved settings or environment variables found, using defaults');
+  }
+}
+
+// Function to save settings to file
+function saveSettings() {
+  try {
+    writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+    console.log('Settings saved to file');
+  } catch (error) {
+    console.error('Failed to save settings to file:', error);
+  }
+}
+
+// Load settings on startup
+loadSettings();
+
+// Settings endpoints
+app.get('/api/settings', (req, res) => {
+  res.json({
+    provider: settings.provider,
+    hasApiKey: !!settings.apiKey,
+    apiKeyMask: settings.apiKey ? '***' + settings.apiKey.slice(-4) : ''
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  const { provider, apiKey } = req.body;
+  console.log('Saving settings:', { provider, apiKey: apiKey ? '***' + apiKey.slice(-4) : 'none' });
+  console.log('Current stored settings before save:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
+  if (provider && apiKey) {
+    settings.provider = provider;
+    settings.apiKey = apiKey;
+    saveSettings(); // Persist to file
+    console.log('Settings saved successfully. New settings:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
+    res.json({ success: true });
+  } else {
+    console.log('Missing provider or apiKey');
+    res.status(400).json({ error: 'Provider and API key are required' });
+  }
+});
+
+app.get('/api/settings/api-key/status', (req, res) => {
+  console.log('Checking API key status:', !!settings.apiKey, 'Provider:', settings.provider);
+  res.json({ hasApiKey: !!settings.apiKey });
+});
+
+// Debug endpoint to see current settings
+app.get('/api/settings/debug', (req, res) => {
+  res.json({
+    provider: settings.provider,
+    hasApiKey: !!settings.apiKey,
+    apiKeyLength: settings.apiKey.length,
+    apiKeyPreview: settings.apiKey ? settings.apiKey.substring(0, 6) + '...' : 'none'
+  });
+});
+
+app.post('/api/settings/test', async (req, res) => {
+  // Use settings from request body if provided, otherwise use stored settings
+  const testSettings = req.body && req.body.apiKey ? req.body : settings;
+  
+  if (!testSettings.apiKey) {
+    return res.status(400).json({ success: false, error: 'No API key configured' });
+  }
+
+  try {
+    console.log('Testing connection with provider:', testSettings.provider);
+    if (testSettings.provider === 'openai') {
+      console.log('Using OpenAI API');
+      const { OpenAI } = await import('openai');
+      const openai = new OpenAI({ apiKey: testSettings.apiKey });
+      await openai.models.list();
+    } else {
+      console.log('Using Anthropic API');
+      const { Anthropic } = await import('@anthropic-ai/sdk');
+      const anthropic = new Anthropic({ apiKey: testSettings.apiKey });
+      await anthropic.messages.create({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'test' }]
+      });
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    console.log('Test connection error:', error.message);
+    res.json({ success: false, error: error.message });
+  }
+});
+
+// Chat endpoint
+app.post('/api/chat', async (req, res) => {
+  if (!settings.apiKey) {
+    return res.status(400).json({ error: 'No API key configured' });
+  }
+
+  const { messages } = req.body;
+  
+  // Set headers for streaming
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    console.log('Chat request received:', { messageCount: messages.length });
+    
+    // Get available tools from MCP client
+    let availableTools: any[] = [];
+    if (mcpClient) {
+      try {
+        const tools = await mcpClient.rawClient.listTools();
+        availableTools = tools.tools || [];
+        console.log(`Found ${availableTools.length} available tools`);
+      } catch (error) {
+        console.error('Failed to list tools:', error);
+      }
+    } else {
+      console.log('No MCP client available');
+    }
+
+    // System prompt for Fly.io assistant
+    const systemPrompt = `You are a helpful Fly.io assistant with access to the user's Fly.io infrastructure through MCP tools. You can:
+
+1. List and manage organizations, applications, machines, volumes, secrets, and IP addresses
+2. View logs, metrics, and deployment history
+3. Create, update, and delete resources
+4. Help with troubleshooting and best practices
+
+When users ask questions, use the available tools to gather information and provide helpful, conversational responses. Format your responses for a chat interface:
+
+- Use plain text, not XML or HTML formatting
+- Use bullet points with dashes (-) or asterisks (*)
+- Use line breaks for readability
+- Present information clearly and concisely
+- Don't use XML tags like <thinking> or <response>
+
+Examples of good responses:
+- "You have 3 applications running:
+  * my-app (deployed, running in sydney)
+  * test-app (suspended)
+  * prod-app (deployed, running in frankfurt)"
+
+- "Here are your current machines:
+  * Machine abc123: running in sydney (shared-cpu-1x)
+  * Machine def456: stopped in frankfurt (performance-1x)"
+
+Available tools include:
+- fly-apps-list, fly-apps-create, fly-apps-destroy
+- fly-machine-list, fly-machine-create, fly-machine-start/stop/restart
+- fly-volumes-list, fly-volumes-create, fly-volumes-extend
+- fly-secrets-list, fly-secrets-set, fly-secrets-unset
+- fly-ips-list, fly-ips-allocate-v4/v6, fly-ips-release
+- fly-logs, fly-releases-list, fly-certs-list
+- And many more...
+
+Always be helpful, accurate, and cautious with destructive operations. Ask for confirmation before deleting resources.`;
+
+    // Prepare messages with system prompt
+    const chatMessages = [
+      { role: 'system', content: systemPrompt },
+      ...messages
+    ];
+
+    if (settings.provider === 'openai') {
+      console.log('Using OpenAI provider');
+      const { OpenAI } = await import('openai');
+      const openai = new OpenAI({ apiKey: settings.apiKey });
+
+      // First, make a non-streaming call to handle tool use
+      console.log('Making OpenAI completion request with tools:', availableTools.length);
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4-turbo-preview',
+        messages: chatMessages as any,
+        tools: availableTools.map(tool => ({
+          type: 'function' as const,
+          function: {
+            name: tool.name,
+            description: tool.description || '',
+            parameters: tool.inputSchema || { type: 'object', properties: {} }
+          }
+        }))
+      });
+      console.log('OpenAI completion received');
+
+      const message = completion.choices[0]?.message;
+      console.log('OpenAI message:', { hasToolCalls: !!message?.tool_calls, toolCallCount: message?.tool_calls?.length || 0, hasContent: !!message?.content });
+      
+      if (message?.tool_calls && message.tool_calls.length > 0) {
+        // Execute tools and add results to conversation
+        const toolMessages = [];
+        for (const toolCall of message.tool_calls) {
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            const result = await callTool(toolCall.function.name, args);
+            toolMessages.push({
+              role: 'tool' as const,
+              tool_call_id: toolCall.id,
+              content: JSON.stringify(result)
+            });
+          } catch (error) {
+            toolMessages.push({
+              role: 'tool' as const,
+              tool_call_id: toolCall.id,
+              content: `Error: ${error}`
+            });
+          }
+        }
+
+        // Continue conversation with tool results
+        const finalCompletion = await openai.chat.completions.create({
+          model: 'gpt-4-turbo-preview',
+          messages: [
+            ...chatMessages,
+            message,
+            ...toolMessages
+          ] as any,
+          stream: true
+        });
+
+        for await (const chunk of finalCompletion) {
+          const content = chunk.choices[0]?.delta?.content;
+          if (content) {
+            res.write(`data: ${JSON.stringify({ content })}\n\n`);
+          }
+        }
+      } else if (message?.content) {
+        console.log('No tools used, streaming content directly');
+        // No tools used, stream the response
+        const words = message.content.split(' ');
+        for (const word of words) {
+          res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+          await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for streaming effect
+        }
+      } else {
+        console.log('No content or tool calls in OpenAI response');
+        res.write(`data: ${JSON.stringify({ content: 'I apologize, but I didn\'t receive a proper response. Please try again.' })}\n\n`);
+      }
+    } else {
+      console.log('Using Anthropic provider');
+      const { Anthropic } = await import('@anthropic-ai/sdk');
+      const anthropic = new Anthropic({ apiKey: settings.apiKey });
+
+      // First, make a non-streaming call to handle tool use
+      console.log('Making Anthropic message request with tools:', availableTools.length);
+      const response = await anthropic.messages.create({
+        model: 'claude-3-opus-20240229',
+        max_tokens: 4096,
+        messages: chatMessages.filter(m => m.role !== 'system') as any,
+        system: systemPrompt,
+        tools: availableTools.map(tool => ({
+          name: tool.name,
+          description: tool.description || '',
+          input_schema: tool.inputSchema || { type: 'object', properties: {} }
+        }))
+      });
+      console.log('Anthropic response received');
+
+      // Check if there are tool use blocks
+      const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
+      console.log('Anthropic response:', { toolUseCount: toolUseBlocks.length, contentBlocks: response.content.length });
+      
+      if (toolUseBlocks.length > 0) {
+        // Execute tools and continue conversation
+        const toolResults = [];
+        for (const toolUse of toolUseBlocks) {
+          try {
+            const result = await callTool(toolUse.name, toolUse.input || {});
+            toolResults.push({
+              type: 'tool_result' as const,
+              tool_use_id: toolUse.id,
+              content: JSON.stringify(result)
+            });
+          } catch (error) {
+            toolResults.push({
+              type: 'tool_result' as const,
+              tool_use_id: toolUse.id,
+              content: `Error: ${error}`,
+              is_error: true
+            });
+          }
+        }
+
+        // Continue conversation with tool results
+        const finalResponse = await anthropic.messages.create({
+          model: 'claude-3-opus-20240229',
+          max_tokens: 4096,
+          messages: [
+            ...chatMessages.filter(m => m.role !== 'system'),
+            {
+              role: 'assistant',
+              content: response.content
+            },
+            {
+              role: 'user',
+              content: toolResults
+            }
+          ] as any,
+          system: systemPrompt,
+          stream: true
+        });
+
+        for await (const chunk of finalResponse) {
+          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            res.write(`data: ${JSON.stringify({ content: chunk.delta.text })}\n\n`);
+          }
+        }
+      } else {
+        console.log('No tools used, streaming text content directly');
+        // No tools used, stream the text response
+        const textBlocks = response.content.filter(block => block.type === 'text');
+        console.log('Text blocks found:', textBlocks.length);
+        
+        if (textBlocks.length > 0) {
+          for (const block of textBlocks) {
+            const words = block.text.split(' ');
+            for (const word of words) {
+              res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+              await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for streaming effect
+            }
+          }
+        } else {
+          console.log('No text blocks in Anthropic response');
+          res.write(`data: ${JSON.stringify({ content: 'I apologize, but I didn\'t receive a proper response. Please try again.' })}\n\n`);
+        }
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } catch (error: any) {
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
+async function start() {
+  await initializeMCPClient();
+  
+  app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+  });
+}
+
 // Catch-all handler: send back React's index.html file for non-API routes
+// This must be AFTER all API routes are defined
 app.get('*', (req, res) => {
   // Skip API routes
   if (req.path.startsWith('/api/')) {
@@ -1095,15 +1474,6 @@ app.get('*', (req, res) => {
   const indexPath = path.join(distPath, 'index.html');
   res.sendFile(indexPath);
 });
-
-// Start server
-async function start() {
-  await initializeMCPClient();
-  
-  app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-  });
-}
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
