@@ -4,12 +4,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { randomUUID } from 'crypto';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
+import { exec, execSync } from 'child_process';
+import { promisify } from 'util';
 import { FlyctlMCPClient } from '../lib/flyctl-client.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const execAsync = promisify(exec);
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -24,9 +27,164 @@ app.use(express.static(distPath));
 
 let mcpClient: FlyctlMCPClient | null = null;
 
+// Check if flyctl is installed
+async function checkFlyctl(): Promise<boolean> {
+  try {
+    execSync('flyctl version', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Install flyctl
+async function installFlyctl() {
+  console.log('flyctl not found in PATH. Installing...');
+  
+  try {
+    const platform = process.platform;
+    
+    if (platform === 'darwin' || platform === 'linux') {
+      // Download and execute the install script directly
+      console.log('Downloading flyctl install script...');
+      
+      try {
+        // Fetch the install script
+        const response = await fetch('https://fly.io/install.sh');
+        if (!response.ok) {
+          throw new Error(`Failed to download install script: ${response.statusText}`);
+        }
+        
+        const scriptContent = await response.text();
+        
+        // Write script to a temporary file and execute it
+        const tmpDir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || '/tmp';
+        const scriptPath = path.join(tmpDir, `fly-install-${Date.now()}.sh`);
+        
+        writeFileSync(scriptPath, scriptContent, { mode: 0o755 });
+        
+        console.log('Running flyctl installer...');
+        const { stdout, stderr } = await execAsync(`sh ${scriptPath}`);
+        
+        // Clean up temporary file
+        try {
+          unlinkSync(scriptPath);
+        } catch {}
+        
+        if (stderr && !stderr.includes('successfully')) {
+          throw new Error(stderr);
+        }
+        
+        // Add to PATH for current session
+        const homeDir = process.env.HOME;
+        const flyctlPath = `${homeDir}/.fly/bin`;
+        process.env.PATH = `${flyctlPath}:${process.env.PATH}`;
+        
+        console.log('flyctl installed successfully!');
+        console.log('Note: You may need to restart your terminal or add ~/.fly/bin to your PATH permanently.');
+        
+      } catch (fetchError) {
+        // Fallback to curl if fetch fails
+        console.log('Direct download failed, trying curl fallback...');
+        const { stdout, stderr } = await execAsync('curl -L https://fly.io/install.sh | sh');
+        
+        if (stderr && !stderr.includes('successfully')) {
+          throw new Error(stderr);
+        }
+        
+        // Add to PATH for current session
+        const homeDir = process.env.HOME;
+        const flyctlPath = `${homeDir}/.fly/bin`;
+        process.env.PATH = `${flyctlPath}:${process.env.PATH}`;
+        
+        console.log('flyctl installed successfully!');
+        console.log('Note: You may need to restart your terminal or add ~/.fly/bin to your PATH permanently.');
+      }
+      
+    } else if (platform === 'win32') {
+      // For Windows, use PowerShell
+      console.log('Installing flyctl using PowerShell...');
+      const { stdout, stderr } = await execAsync('powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"');
+      
+      if (stderr && !stderr.includes('successfully')) {
+        throw new Error(stderr);
+      }
+      
+      console.log('flyctl installed successfully!');
+      console.log('Note: You may need to restart your terminal for the PATH changes to take effect.');
+      
+    } else {
+      throw new Error(`Unsupported platform: ${platform}`);
+    }
+    
+    // Verify installation and add to PATH if needed
+    const installed = await ensureFlyctlInPath();
+    if (!installed) {
+      throw new Error('flyctl installation verification failed');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Failed to install flyctl:', error);
+    console.error('\nPlease install flyctl manually:');
+    console.error('  macOS/Linux: curl -L https://fly.io/install.sh | sh');
+    console.error('  Windows: powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"');
+    console.error('  Or visit: https://fly.io/docs/flyctl/install/');
+    return false;
+  }
+}
+
+// Check if flyctl exists in common locations and add to PATH if needed
+async function ensureFlyctlInPath(): Promise<boolean> {
+  // First check if it's already in PATH
+  try {
+    execSync('flyctl version', { stdio: 'ignore' });
+    return true;
+  } catch {
+    // Not in PATH, check common locations
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    const platform = process.platform;
+    
+    const possiblePaths = [
+      `${homeDir}/.fly/bin/flyctl`, // Default install location
+      `${homeDir}\\.fly\\bin\\flyctl.exe`, // Windows default
+      '/usr/local/bin/flyctl', // Homebrew or manual install
+      '/opt/homebrew/bin/flyctl', // Homebrew on Apple Silicon
+    ];
+    
+    for (const flyctlPath of possiblePaths) {
+      try {
+        execSync(`"${flyctlPath}" version`, { stdio: 'ignore' });
+        // Found flyctl, add its directory to PATH
+        const flyctlDir = path.dirname(flyctlPath);
+        process.env.PATH = `${flyctlDir}:${process.env.PATH}`;
+        console.log(`Found flyctl at ${flyctlPath}, added to PATH`);
+        return true;
+      } catch {
+        // Continue checking other paths
+      }
+    }
+    
+    return false;
+  }
+}
+
 // Initialize MCP client
 async function initializeMCPClient() {
   try {
+    // First check if flyctl is available in PATH or can be added
+    const flyctlAvailable = await ensureFlyctlInPath();
+    
+    if (!flyctlAvailable) {
+      console.log('flyctl not found in common locations, attempting to install...');
+      const installed = await installFlyctl();
+      if (!installed) {
+        throw new Error('flyctl is required but could not be installed automatically');
+      }
+    } else {
+      console.log('flyctl is available');
+    }
+    
     mcpClient = new FlyctlMCPClient();
     // Use flyctl from system PATH
     await mcpClient.connect();

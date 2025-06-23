@@ -16,7 +16,7 @@ const port = process.env.PORT || 3001;
 console.log('🚀 Starting Fly Explorer...');
 console.log(`📍 Server will be available at http://localhost:${port}`);
 console.log('🌐 Browser will open automatically when ready');
-console.log('💡 Make sure flyctl is installed and available in your PATH');
+console.log('🔍 Checking for flyctl... (will install automatically if needed)');
 console.log('📖 Documentation: https://github.com/rubys/fly-explorer#readme');
 console.log('');
 

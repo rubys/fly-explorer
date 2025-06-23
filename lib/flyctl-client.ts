@@ -1,6 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { z } from 'zod';
+import { execSync } from 'child_process';
+import * as os from 'os';
 
 export class FlyctlMCPClient {
   private client: Client;
@@ -22,7 +24,36 @@ export class FlyctlMCPClient {
 
   async connect(flyctlPath?: string): Promise<void> {
     // Use flyctl from PATH or provided path
-    const command = flyctlPath || 'flyctl';
+    let command = flyctlPath || 'flyctl';
+    
+    // If flyctl is not in PATH, check common installation locations
+    if (!flyctlPath) {
+      try {
+        execSync('flyctl version', { stdio: 'ignore' });
+      } catch {
+        // Try common installation paths
+        const homeDir = os.homedir();
+        const platform = process.platform;
+        
+        const possiblePaths = [
+          `${homeDir}/.fly/bin/flyctl`, // Unix-like default
+          `${homeDir}\\.fly\\bin\\flyctl.exe`, // Windows default
+          '/usr/local/bin/flyctl', // Homebrew or manual install
+          '/opt/homebrew/bin/flyctl', // Homebrew on Apple Silicon
+        ];
+        
+        for (const path of possiblePaths) {
+          try {
+            execSync(`"${path}" version`, { stdio: 'ignore' });
+            command = path;
+            console.log(`Found flyctl at: ${path}`);
+            break;
+          } catch {
+            // Continue checking other paths
+          }
+        }
+      }
+    }
     
     console.log(`Spawning flyctl MCP server: ${command}`);
 
