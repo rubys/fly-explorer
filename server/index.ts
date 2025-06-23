@@ -1090,7 +1090,7 @@ app.get('/api/health', (req, res) => {
 const settingsFile = path.join(__dirname, 'settings.json');
 
 let settings = {
-  provider: 'openai' as 'openai' | 'anthropic',
+  provider: 'openai' as 'openai' | 'anthropic' | 'gemini' | 'cohere' | 'mistral',
   apiKey: ''
 };
 
@@ -1120,6 +1120,18 @@ function loadSettings() {
     settings.provider = 'anthropic';
     settings.apiKey = process.env.ANTHROPIC_API_KEY;
     console.log('Loaded settings from environment: Anthropic');
+  } else if (process.env.GEMINI_API_KEY) {
+    settings.provider = 'gemini';
+    settings.apiKey = process.env.GEMINI_API_KEY;
+    console.log('Loaded settings from environment: Gemini');
+  } else if (process.env.COHERE_API_KEY) {
+    settings.provider = 'cohere';
+    settings.apiKey = process.env.COHERE_API_KEY;
+    console.log('Loaded settings from environment: Cohere');
+  } else if (process.env.MISTRAL_API_KEY) {
+    settings.provider = 'mistral';
+    settings.apiKey = process.env.MISTRAL_API_KEY;
+    console.log('Loaded settings from environment: Mistral');
   } else {
     console.log('No saved settings or environment variables found, using defaults');
   }
@@ -1193,7 +1205,7 @@ app.post('/api/settings/test', async (req, res) => {
       const { OpenAI } = await import('openai');
       const openai = new OpenAI({ apiKey: testSettings.apiKey });
       await openai.models.list();
-    } else {
+    } else if (testSettings.provider === 'anthropic') {
       console.log('Using Anthropic API');
       const { Anthropic } = await import('@anthropic-ai/sdk');
       const anthropic = new Anthropic({ apiKey: testSettings.apiKey });
@@ -1202,6 +1214,22 @@ app.post('/api/settings/test', async (req, res) => {
         max_tokens: 1,
         messages: [{ role: 'user', content: 'test' }]
       });
+    } else if (testSettings.provider === 'gemini') {
+      console.log('Using Gemini API');
+      const { GoogleGenerativeAI } = await import('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(testSettings.apiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+      await model.generateContent('test');
+    } else if (testSettings.provider === 'cohere') {
+      console.log('Using Cohere API');
+      const { CohereClient } = await import('cohere-ai');
+      const cohere = new CohereClient({ token: testSettings.apiKey });
+      await cohere.chat({ message: 'test', maxTokens: 1 });
+    } else if (testSettings.provider === 'mistral') {
+      console.log('Using Mistral API');
+      const { Mistral } = await import('@mistralai/mistralai');
+      const mistral = new Mistral({ apiKey: testSettings.apiKey });
+      await mistral.models.list();
     }
     res.json({ success: true });
   } catch (error: any) {
@@ -1209,6 +1237,340 @@ app.post('/api/settings/test', async (req, res) => {
     res.json({ success: false, error: error.message });
   }
 });
+
+// Helper function to handle different AI providers
+async function handleProviderChat(provider: string, apiKey: string, chatMessages: any[], systemPrompt: string, availableTools: any[], res: any) {
+  if (provider === 'openai') {
+    console.log('Using OpenAI provider');
+    const { OpenAI } = await import('openai');
+    const openai = new OpenAI({ apiKey });
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4-turbo-preview',
+      messages: chatMessages as any,
+      tools: availableTools.map(tool => ({
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description || '',
+          parameters: tool.inputSchema || { type: 'object', properties: {} }
+        }
+      }))
+    });
+
+    const message = completion.choices[0]?.message;
+    
+    if (message?.tool_calls && message.tool_calls.length > 0) {
+      const toolMessages = [];
+      for (const toolCall of message.tool_calls) {
+        try {
+          const args = JSON.parse(toolCall.function.arguments);
+          const result = await callTool(toolCall.function.name, args);
+          toolMessages.push({
+            role: 'tool' as const,
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result)
+          });
+        } catch (error) {
+          toolMessages.push({
+            role: 'tool' as const,
+            tool_call_id: toolCall.id,
+            content: `Error: ${error}`
+          });
+        }
+      }
+
+      const finalCompletion = await openai.chat.completions.create({
+        model: 'gpt-4-turbo-preview',
+        messages: [...chatMessages, message, ...toolMessages] as any,
+        stream: true
+      });
+
+      for await (const chunk of finalCompletion) {
+        const content = chunk.choices[0]?.delta?.content;
+        if (content) {
+          res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        }
+      }
+    } else if (message?.content) {
+      const words = message.content.split(' ');
+      for (const word of words) {
+        res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  } else if (provider === 'anthropic') {
+    console.log('Using Anthropic provider');
+    const { Anthropic } = await import('@anthropic-ai/sdk');
+    const anthropic = new Anthropic({ apiKey });
+
+    const response = await anthropic.messages.create({
+      model: 'claude-3-opus-20240229',
+      max_tokens: 4096,
+      messages: chatMessages.filter(m => m.role !== 'system') as any,
+      system: systemPrompt,
+      tools: availableTools.map(tool => ({
+        name: tool.name,
+        description: tool.description || '',
+        input_schema: tool.inputSchema || { type: 'object', properties: {} }
+      }))
+    });
+
+    const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
+    
+    if (toolUseBlocks.length > 0) {
+      const toolResults = [];
+      for (const toolUse of toolUseBlocks) {
+        try {
+          const result = await callTool(toolUse.name, toolUse.input || {});
+          toolResults.push({
+            type: 'tool_result' as const,
+            tool_use_id: toolUse.id,
+            content: JSON.stringify(result)
+          });
+        } catch (error) {
+          toolResults.push({
+            type: 'tool_result' as const,
+            tool_use_id: toolUse.id,
+            content: `Error: ${error}`,
+            is_error: true
+          });
+        }
+      }
+
+      const finalResponse = await anthropic.messages.create({
+        model: 'claude-3-opus-20240229',
+        max_tokens: 4096,
+        messages: [
+          ...chatMessages.filter(m => m.role !== 'system'),
+          { role: 'assistant', content: response.content },
+          { role: 'user', content: toolResults }
+        ] as any,
+        system: systemPrompt,
+        stream: true
+      });
+
+      for await (const chunk of finalResponse) {
+        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+          res.write(`data: ${JSON.stringify({ content: chunk.delta.text })}\n\n`);
+        }
+      }
+    } else {
+      const textBlocks = response.content.filter(block => block.type === 'text');
+      if (textBlocks.length > 0) {
+        for (const block of textBlocks) {
+          const words = block.text.split(' ');
+          for (const word of words) {
+            res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+        }
+      }
+    }
+  } else if (provider === 'gemini') {
+    console.log('Using Gemini provider');
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+      model: 'gemini-pro',
+      tools: availableTools.length > 0 ? [{
+        functionDeclarations: availableTools.map(tool => ({
+          name: tool.name,
+          description: tool.description || '',
+          parameters: tool.inputSchema || { type: 'object', properties: {} }
+        }))
+      }] : undefined
+    });
+
+    const chat = model.startChat({
+      history: chatMessages.filter(m => m.role !== 'system').map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content }]
+      })),
+      generationConfig: { maxOutputTokens: 4096 }
+    });
+
+    const lastMessage = chatMessages[chatMessages.length - 1];
+    const result = await chat.sendMessage(systemPrompt + '\n\n' + lastMessage.content);
+    
+    const functionCalls = result.response.functionCalls();
+    if (functionCalls && functionCalls.length > 0) {
+      const toolResults = [];
+      for (const funcCall of functionCalls) {
+        try {
+          const toolResult = await callTool(funcCall.name, funcCall.args || {});
+          toolResults.push({
+            functionResponse: {
+              name: funcCall.name,
+              response: toolResult
+            }
+          });
+        } catch (error) {
+          toolResults.push({
+            functionResponse: {
+              name: funcCall.name,
+              response: { error: (error as Error).toString() }
+            }
+          });
+        }
+      }
+
+      const finalResult = await chat.sendMessage(toolResults);
+      const words = finalResult.response.text().split(' ');
+      for (const word of words) {
+        res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    } else {
+      const words = result.response.text().split(' ');
+      for (const word of words) {
+        res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  } else if (provider === 'cohere') {
+    console.log('Using Cohere provider');
+    const { CohereClient } = await import('cohere-ai');
+    const cohere = new CohereClient({ token: apiKey });
+
+    const lastMessage = chatMessages[chatMessages.length - 1];
+    const chatHistory = chatMessages.slice(0, -1).filter(m => m.role !== 'system').map(m => ({
+      role: m.role.toUpperCase() as 'USER' | 'CHATBOT',
+      message: m.content
+    }));
+
+    const tools = availableTools.length > 0 ? availableTools.map(tool => ({
+      name: tool.name,
+      description: tool.description || '',
+      parameterDefinitions: Object.entries(tool.inputSchema?.properties || {}).reduce((acc, [key, value]: [string, any]) => {
+        acc[key] = {
+          description: value.description || '',
+          type: value.type || 'string',
+          required: tool.inputSchema?.required?.includes(key) || false
+        };
+        return acc;
+      }, {} as any)
+    })) : undefined;
+
+    const response = await cohere.chat({
+      message: systemPrompt + '\n\n' + lastMessage.content,
+      chatHistory,
+      model: 'command-r-plus',
+      maxTokens: 4096,
+      tools
+    });
+
+    if (response.toolCalls && response.toolCalls.length > 0) {
+      const toolResults = [];
+      for (const toolCall of response.toolCalls) {
+        try {
+          const result = await callTool(toolCall.name, toolCall.parameters || {});
+          toolResults.push({
+            call: toolCall,
+            outputs: [{ result: JSON.stringify(result) }]
+          });
+        } catch (error) {
+          toolResults.push({
+            call: toolCall,
+            outputs: [{ result: `Error: ${error}` }]
+          });
+        }
+      }
+
+      const finalResponse = await cohere.chat({
+        message: '',
+        chatHistory: [
+          ...chatHistory,
+          { role: 'USER', message: lastMessage.content },
+          { role: 'CHATBOT', message: response.text, toolCalls: response.toolCalls }
+        ],
+        model: 'command-r-plus',
+        maxTokens: 4096,
+        toolResults
+      });
+
+      const words = finalResponse.text.split(' ');
+      for (const word of words) {
+        res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    } else {
+      const words = response.text.split(' ');
+      for (const word of words) {
+        res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  } else if (provider === 'mistral') {
+    console.log('Using Mistral provider');
+    const { Mistral } = await import('@mistralai/mistralai');
+    const mistral = new Mistral({ apiKey });
+
+    const tools = availableTools.length > 0 ? availableTools.map(tool => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description || '',
+        parameters: tool.inputSchema || { type: 'object', properties: {} }
+      }
+    })) : undefined;
+
+    const response = await mistral.chat.complete({
+      model: 'mistral-large-latest',
+      messages: chatMessages as any,
+      tools,
+      maxTokens: 4096
+    });
+
+    const message = response.choices[0]?.message;
+    
+    if (message?.toolCalls && message.toolCalls.length > 0) {
+      const toolMessages = [];
+      for (const toolCall of message.toolCalls) {
+        try {
+          const args = typeof toolCall.function.arguments === 'string' 
+            ? JSON.parse(toolCall.function.arguments)
+            : toolCall.function.arguments;
+          const result = await callTool(toolCall.function.name, args);
+          toolMessages.push({
+            role: 'tool' as const,
+            name: toolCall.function.name,
+            content: JSON.stringify(result),
+            toolCallId: toolCall.id
+          });
+        } catch (error) {
+          toolMessages.push({
+            role: 'tool' as const,
+            name: toolCall.function.name,
+            content: `Error: ${error}`,
+            toolCallId: toolCall.id
+          });
+        }
+      }
+
+      const finalResponse = await mistral.chat.complete({
+        model: 'mistral-large-latest',
+        messages: [...chatMessages, message, ...toolMessages] as any,
+        maxTokens: 4096
+      });
+
+      const finalMessage = finalResponse.choices[0]?.message?.content;
+      if (finalMessage && typeof finalMessage === 'string') {
+        const words = finalMessage.split(' ');
+        for (const word of words) {
+          res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
+    } else if (message?.content && typeof message.content === 'string') {
+      const words = message.content.split(' ');
+      for (const word of words) {
+        res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    }
+  }
+}
 
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
@@ -1283,169 +1645,7 @@ Always be helpful, accurate, and cautious with destructive operations. Ask for c
       ...messages
     ];
 
-    if (settings.provider === 'openai') {
-      console.log('Using OpenAI provider');
-      const { OpenAI } = await import('openai');
-      const openai = new OpenAI({ apiKey: settings.apiKey });
-
-      // First, make a non-streaming call to handle tool use
-      console.log('Making OpenAI completion request with tools:', availableTools.length);
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4-turbo-preview',
-        messages: chatMessages as any,
-        tools: availableTools.map(tool => ({
-          type: 'function' as const,
-          function: {
-            name: tool.name,
-            description: tool.description || '',
-            parameters: tool.inputSchema || { type: 'object', properties: {} }
-          }
-        }))
-      });
-      console.log('OpenAI completion received');
-
-      const message = completion.choices[0]?.message;
-      console.log('OpenAI message:', { hasToolCalls: !!message?.tool_calls, toolCallCount: message?.tool_calls?.length || 0, hasContent: !!message?.content });
-      
-      if (message?.tool_calls && message.tool_calls.length > 0) {
-        // Execute tools and add results to conversation
-        const toolMessages = [];
-        for (const toolCall of message.tool_calls) {
-          try {
-            const args = JSON.parse(toolCall.function.arguments);
-            const result = await callTool(toolCall.function.name, args);
-            toolMessages.push({
-              role: 'tool' as const,
-              tool_call_id: toolCall.id,
-              content: JSON.stringify(result)
-            });
-          } catch (error) {
-            toolMessages.push({
-              role: 'tool' as const,
-              tool_call_id: toolCall.id,
-              content: `Error: ${error}`
-            });
-          }
-        }
-
-        // Continue conversation with tool results
-        const finalCompletion = await openai.chat.completions.create({
-          model: 'gpt-4-turbo-preview',
-          messages: [
-            ...chatMessages,
-            message,
-            ...toolMessages
-          ] as any,
-          stream: true
-        });
-
-        for await (const chunk of finalCompletion) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
-          }
-        }
-      } else if (message?.content) {
-        console.log('No tools used, streaming content directly');
-        // No tools used, stream the response
-        const words = message.content.split(' ');
-        for (const word of words) {
-          res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
-          await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for streaming effect
-        }
-      } else {
-        console.log('No content or tool calls in OpenAI response');
-        res.write(`data: ${JSON.stringify({ content: 'I apologize, but I didn\'t receive a proper response. Please try again.' })}\n\n`);
-      }
-    } else {
-      console.log('Using Anthropic provider');
-      const { Anthropic } = await import('@anthropic-ai/sdk');
-      const anthropic = new Anthropic({ apiKey: settings.apiKey });
-
-      // First, make a non-streaming call to handle tool use
-      console.log('Making Anthropic message request with tools:', availableTools.length);
-      const response = await anthropic.messages.create({
-        model: 'claude-3-opus-20240229',
-        max_tokens: 4096,
-        messages: chatMessages.filter(m => m.role !== 'system') as any,
-        system: systemPrompt,
-        tools: availableTools.map(tool => ({
-          name: tool.name,
-          description: tool.description || '',
-          input_schema: tool.inputSchema || { type: 'object', properties: {} }
-        }))
-      });
-      console.log('Anthropic response received');
-
-      // Check if there are tool use blocks
-      const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
-      console.log('Anthropic response:', { toolUseCount: toolUseBlocks.length, contentBlocks: response.content.length });
-      
-      if (toolUseBlocks.length > 0) {
-        // Execute tools and continue conversation
-        const toolResults = [];
-        for (const toolUse of toolUseBlocks) {
-          try {
-            const result = await callTool(toolUse.name, toolUse.input || {});
-            toolResults.push({
-              type: 'tool_result' as const,
-              tool_use_id: toolUse.id,
-              content: JSON.stringify(result)
-            });
-          } catch (error) {
-            toolResults.push({
-              type: 'tool_result' as const,
-              tool_use_id: toolUse.id,
-              content: `Error: ${error}`,
-              is_error: true
-            });
-          }
-        }
-
-        // Continue conversation with tool results
-        const finalResponse = await anthropic.messages.create({
-          model: 'claude-3-opus-20240229',
-          max_tokens: 4096,
-          messages: [
-            ...chatMessages.filter(m => m.role !== 'system'),
-            {
-              role: 'assistant',
-              content: response.content
-            },
-            {
-              role: 'user',
-              content: toolResults
-            }
-          ] as any,
-          system: systemPrompt,
-          stream: true
-        });
-
-        for await (const chunk of finalResponse) {
-          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-            res.write(`data: ${JSON.stringify({ content: chunk.delta.text })}\n\n`);
-          }
-        }
-      } else {
-        console.log('No tools used, streaming text content directly');
-        // No tools used, stream the text response
-        const textBlocks = response.content.filter(block => block.type === 'text');
-        console.log('Text blocks found:', textBlocks.length);
-        
-        if (textBlocks.length > 0) {
-          for (const block of textBlocks) {
-            const words = block.text.split(' ');
-            for (const word of words) {
-              res.write(`data: ${JSON.stringify({ content: word + ' ' })}\n\n`);
-              await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for streaming effect
-            }
-          }
-        } else {
-          console.log('No text blocks in Anthropic response');
-          res.write(`data: ${JSON.stringify({ content: 'I apologize, but I didn\'t receive a proper response. Please try again.' })}\n\n`);
-        }
-      }
-    }
+    await handleProviderChat(settings.provider, settings.apiKey, chatMessages, systemPrompt, availableTools, res);
 
     res.write('data: [DONE]\n\n');
     res.end();

@@ -1,7 +1,29 @@
 import React, { useState, useEffect } from 'react';
 
+function getApiKeyPlaceholder(provider: ApiKeySettings['provider']): string {
+  switch (provider) {
+    case 'openai': return 'sk-...';
+    case 'anthropic': return 'sk-ant-...';
+    case 'gemini': return 'AIza...';
+    case 'cohere': return 'Your Cohere API key';
+    case 'mistral': return 'Your Mistral API key'; 
+    default: return 'Your API key';
+  }
+}
+
+function getApiKeyHelp(provider: ApiKeySettings['provider']): string {
+  switch (provider) {
+    case 'openai': return 'Get your API key from https://platform.openai.com/api-keys';
+    case 'anthropic': return 'Get your API key from https://console.anthropic.com/settings/keys';
+    case 'gemini': return 'Get your API key from https://aistudio.google.com/app/apikey';
+    case 'cohere': return 'Get your API key from https://dashboard.cohere.com/api-keys';
+    case 'mistral': return 'Get your API key from https://console.mistral.ai/api-keys/';
+    default: return 'Get your API key from your provider\'s console';
+  }
+}
+
 interface ApiKeySettings {
-  provider: 'openai' | 'anthropic';
+  provider: 'openai' | 'anthropic' | 'gemini' | 'cohere' | 'mistral';
   apiKey: string;
 }
 
@@ -115,11 +137,14 @@ export function Settings() {
               </label>
               <select
                 value={settings.provider}
-                onChange={(e) => setSettings({ ...settings, provider: e.target.value as 'openai' | 'anthropic' })}
+                onChange={(e) => setSettings({ ...settings, provider: e.target.value as ApiKeySettings['provider'] })}
                 className="settings-select"
               >
-                <option value="openai">OpenAI (GPT-4)</option>
                 <option value="anthropic">Anthropic (Claude)</option>
+                <option value="cohere">Cohere (Command R+)</option>
+                <option value="gemini">Google (Gemini Pro)</option>
+                <option value="mistral">Mistral AI (Large)</option>
+                <option value="openai">OpenAI (GPT-4)</option>
               </select>
             </div>
 
@@ -137,7 +162,7 @@ export function Settings() {
                   onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
                   placeholder={hasExistingKey 
                     ? 'Enter new API key to replace existing one'
-                    : (settings.provider === 'openai' ? 'sk-...' : 'sk-ant-...')
+                    : getApiKeyPlaceholder(settings.provider)
                   }
                   className="settings-input"
                 />
@@ -150,10 +175,7 @@ export function Settings() {
                 </button>
               </div>
               <p className="settings-help-text">
-                {settings.provider === 'openai' 
-                  ? 'Get your API key from https://platform.openai.com/api-keys'
-                  : 'Get your API key from https://console.anthropic.com/settings/keys'
-                }
+                {getApiKeyHelp(settings.provider)}
               </p>
             </div>
           </div>
