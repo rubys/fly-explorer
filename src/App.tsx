@@ -5,6 +5,8 @@ import { MachineLifecycle } from './components/MachineLifecycle';
 import { MCPToolExplorer } from './components/MCPToolExplorer';
 import { AppManagement } from './components/AppManagement';
 import { PlatformInfo } from './components/PlatformInfo';
+import { ChatInterface } from './components/ChatInterface';
+import { Settings } from './components/Settings';
 
 interface Organization {
   slug: string;
@@ -100,6 +102,8 @@ function App() {
   const [showToolExplorer, setShowToolExplorer] = useState(false);
   const [showAppManagement, setShowAppManagement] = useState(false);
   const [showPlatformInfo, setShowPlatformInfo] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   
   // IP management state
   const [ipAddresses, setIpAddresses] = useState<any[]>([]);
@@ -901,6 +905,13 @@ function App() {
       <header className="app-header">
         <h1>Fly.io Explorer</h1>
         <div className="header-actions">
+          <button 
+            className="tool-explorer-btn"
+            onClick={() => setShowChat(true)}
+            title="Open Chat Assistant"
+          >
+            💬 Chat
+          </button>
           <button 
             className="tool-explorer-btn"
             onClick={() => setShowPlatformInfo(true)}
@@ -1892,6 +1903,43 @@ function App() {
       
       {showPlatformInfo && (
         <PlatformInfo onClose={() => setShowPlatformInfo(false)} />
+      )}
+      
+      {showChat && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowChat(false)}>
+          <div className="modal-content chat-modal">
+            <div className="modal-header">
+              <h2>Fly.io AI Assistant</h2>
+              <div className="header-buttons">
+                <button 
+                  className="settings-btn"
+                  onClick={() => setShowSettings(true)}
+                  title="Open Settings"
+                >
+                  ⚙️ Settings
+                </button>
+                <button className="close-btn" onClick={() => setShowChat(false)}>×</button>
+              </div>
+            </div>
+            <div className="modal-body chat-body">
+              <ChatInterface />
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {showSettings && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowSettings(false)}>
+          <div className="modal-content settings-modal">
+            <div className="modal-header">
+              <h2>Settings</h2>
+              <button className="close-btn" onClick={() => setShowSettings(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <Settings />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
