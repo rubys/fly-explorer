@@ -1658,8 +1658,25 @@ Always be helpful, accurate, and cautious with destructive operations. Ask for c
 async function start() {
   await initializeMCPClient();
   
-  app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+  app.listen(port, async () => {
+    const url = `http://localhost:${port}`;
+    console.log(`Server running at ${url}`);
+    
+    // Open browser automatically
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const open = (await import('open')).default;
+        // In dev mode with backend on 3001, open frontend on 3000
+        const browserUrl = port === 3001 ? 'http://localhost:3000' : url;
+        // Add a small delay to ensure server is fully ready
+        setTimeout(async () => {
+          await open(browserUrl);
+          console.log(`Browser opened automatically at ${browserUrl}`);
+        }, 1000);
+      } catch (error) {
+        console.log('Could not open browser automatically:', error);
+      }
+    }
   });
 }
 
