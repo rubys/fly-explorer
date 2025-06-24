@@ -20,7 +20,7 @@
     "client:dev": "vite",
     "build": "tsc -p server/tsconfig.json && vite build",
     "preview": "vite preview",
-    "start": "node dist/server/index.js",
+    "start": "NODE_ENV=production node dist/server/index.js",
     "test:cli": "npm run build && node bin/fly-explorer.js",
     "prepublishOnly": "npm run build"
   },

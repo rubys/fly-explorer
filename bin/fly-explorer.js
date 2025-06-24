@@ -26,7 +26,8 @@ const server = spawn('node', [serverPath], {
   stdio: 'inherit',
   env: {
     ...process.env,
-    PORT: port
+    PORT: port,
+    NODE_ENV: 'production'
   }
 });
 

@@ -3346,6 +3346,30 @@
   cursor: not-allowed;
 }
 
+.settings-danger-button {
+  padding: 0.875rem 1.5rem;
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(220, 53, 69, 0.2);
+}
+
+.settings-danger-button:hover:not(:disabled) {
+  background: #c82333;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(220, 53, 69, 0.3);
+}
+
+.settings-danger-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .settings-status-message {
   font-size: 0.875rem;
   font-weight: 500;

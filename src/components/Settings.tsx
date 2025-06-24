@@ -53,7 +53,7 @@ export function Settings() {
         setHasExistingKey(data.hasApiKey);
       }
     } catch (error) {
-      console.error('Failed to load settings:', error);
+      // Failed to load settings, will use defaults
     }
   };
 
@@ -69,25 +69,28 @@ export function Settings() {
     setSaveStatus('idle');
 
     try {
-      console.log('Saving settings:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
       const response = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
-
-      console.log('Save response:', response.status);
       if (response.ok) {
         setSaveStatus('success');
+        setHasExistingKey(true);
         setTimeout(() => setSaveStatus('idle'), 3000);
       } else {
         setSaveStatus('error');
-        const errorText = await response.text();
-        console.error('Save failed:', errorText);
+        try {
+          const errorData = await response.json();
+          alert(`Failed to save settings: ${errorData.error || 'Unknown error'}`);
+        } catch {
+          const errorText = await response.text();
+          alert(`Failed to save settings: ${errorText || 'Unknown error'}`);
+        }
       }
     } catch (error) {
-      console.error('Save error:', error);
       setSaveStatus('error');
+      alert(`Failed to save settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
@@ -114,6 +117,35 @@ export function Settings() {
       }
     } catch (error) {
       alert('Failed to test connection');
+    }
+  };
+
+  const clearApiKey = async () => {
+    if (!confirm('Are you sure you want to clear the stored API key? The chat interface will not work until you configure a new key.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/settings/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (response.ok) {
+        setSaveStatus('success');
+        setHasExistingKey(false);
+        setSettings({ ...settings, apiKey: '' });
+        setTimeout(() => {
+          setSaveStatus('idle');
+          alert('API key cleared successfully');
+        }, 500);
+      } else {
+        setSaveStatus('error');
+        alert('Failed to clear API key');
+      }
+    } catch (error) {
+      setSaveStatus('error');
+      alert('Failed to clear API key');
     }
   };
 
@@ -197,6 +229,16 @@ export function Settings() {
             >
               Test Connection
             </button>
+
+            {hasExistingKey && (
+              <button
+                type="button"
+                onClick={clearApiKey}
+                className="settings-danger-button"
+              >
+                Clear API Key
+              </button>
+            )}
 
             {saveStatus === 'success' && (
               <div className="settings-status-message settings-status-success">

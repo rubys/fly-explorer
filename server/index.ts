@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { randomUUID } from 'crypto';
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { FlyctlMCPClient } from '../lib/flyctl-client.js';
@@ -1248,8 +1248,6 @@ app.post('/api/tools/:toolName/execute', async (req, res) => {
     const { toolName } = req.params;
     const { arguments: toolArgs } = req.body;
     
-    console.log(`Executing tool: ${toolName} with args:`, toolArgs);
-    
     const result = await callTool(toolName, toolArgs || {});
     res.json({ success: true, result });
   } catch (error) {
@@ -1267,7 +1265,13 @@ app.get('/api/health', (req, res) => {
 });
 
 // Settings management
-const settingsFile = path.join(__dirname, 'settings.json');
+// Always use ~/.fly/explorer/settings.json for settings
+const getSettingsPath = () => {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  return path.join(homeDir, '.fly', 'explorer', 'settings.json');
+};
+
+const settingsFile = getSettingsPath();
 
 let settings = {
   provider: 'openai' as 'openai' | 'anthropic' | 'gemini' | 'cohere' | 'mistral',
@@ -1283,7 +1287,6 @@ function loadSettings() {
       if (savedSettings.provider && savedSettings.apiKey) {
         settings.provider = savedSettings.provider;
         settings.apiKey = savedSettings.apiKey;
-        console.log('Loaded settings from file:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
         return;
       }
     }
@@ -1295,35 +1298,35 @@ function loadSettings() {
   if (process.env.OPENAI_API_KEY) {
     settings.provider = 'openai';
     settings.apiKey = process.env.OPENAI_API_KEY;
-    console.log('Loaded settings from environment: OpenAI');
   } else if (process.env.ANTHROPIC_API_KEY) {
     settings.provider = 'anthropic';
     settings.apiKey = process.env.ANTHROPIC_API_KEY;
-    console.log('Loaded settings from environment: Anthropic');
   } else if (process.env.GEMINI_API_KEY) {
     settings.provider = 'gemini';
     settings.apiKey = process.env.GEMINI_API_KEY;
-    console.log('Loaded settings from environment: Gemini');
   } else if (process.env.COHERE_API_KEY) {
     settings.provider = 'cohere';
     settings.apiKey = process.env.COHERE_API_KEY;
-    console.log('Loaded settings from environment: Cohere');
   } else if (process.env.MISTRAL_API_KEY) {
     settings.provider = 'mistral';
     settings.apiKey = process.env.MISTRAL_API_KEY;
-    console.log('Loaded settings from environment: Mistral');
-  } else {
-    console.log('No saved settings or environment variables found, using defaults');
   }
 }
 
 // Function to save settings to file
 function saveSettings() {
   try {
+    // Always ensure directory exists
+    const settingsDir = path.dirname(settingsFile);
+    if (!existsSync(settingsDir)) {
+      mkdirSync(settingsDir, { recursive: true });
+    }
+    
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
-    console.log('Settings saved to file');
+    return true;
   } catch (error) {
     console.error('Failed to save settings to file:', error);
+    throw error; // Re-throw the error so the endpoint can handle it
   }
 }
 
@@ -1341,22 +1344,22 @@ app.get('/api/settings', (req, res) => {
 
 app.post('/api/settings', (req, res) => {
   const { provider, apiKey } = req.body;
-  console.log('Saving settings:', { provider, apiKey: apiKey ? '***' + apiKey.slice(-4) : 'none' });
-  console.log('Current stored settings before save:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
   if (provider && apiKey) {
-    settings.provider = provider;
-    settings.apiKey = apiKey;
-    saveSettings(); // Persist to file
-    console.log('Settings saved successfully. New settings:', { provider: settings.provider, hasApiKey: !!settings.apiKey });
-    res.json({ success: true });
+    try {
+      settings.provider = provider;
+      settings.apiKey = apiKey;
+      saveSettings(); // Persist to file
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error saving settings:', error);
+      res.status(500).json({ error: 'Failed to save settings to disk' });
+    }
   } else {
-    console.log('Missing provider or apiKey');
     res.status(400).json({ error: 'Provider and API key are required' });
   }
 });
 
 app.get('/api/settings/api-key/status', (req, res) => {
-  console.log('Checking API key status:', !!settings.apiKey, 'Provider:', settings.provider);
   res.json({ hasApiKey: !!settings.apiKey });
 });
 
@@ -1379,14 +1382,11 @@ app.post('/api/settings/test', async (req, res) => {
   }
 
   try {
-    console.log('Testing connection with provider:', testSettings.provider);
     if (testSettings.provider === 'openai') {
-      console.log('Using OpenAI API');
       const { OpenAI } = await import('openai');
       const openai = new OpenAI({ apiKey: testSettings.apiKey });
       await openai.models.list();
     } else if (testSettings.provider === 'anthropic') {
-      console.log('Using Anthropic API');
       const { Anthropic } = await import('@anthropic-ai/sdk');
       const anthropic = new Anthropic({ apiKey: testSettings.apiKey });
       await anthropic.messages.create({
@@ -1395,33 +1395,39 @@ app.post('/api/settings/test', async (req, res) => {
         messages: [{ role: 'user', content: 'test' }]
       });
     } else if (testSettings.provider === 'gemini') {
-      console.log('Using Gemini API');
       const { GoogleGenerativeAI } = await import('@google/generative-ai');
       const genAI = new GoogleGenerativeAI(testSettings.apiKey);
       const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
       await model.generateContent('test');
     } else if (testSettings.provider === 'cohere') {
-      console.log('Using Cohere API');
       const { CohereClient } = await import('cohere-ai');
       const cohere = new CohereClient({ token: testSettings.apiKey });
       await cohere.chat({ message: 'test', maxTokens: 1 });
     } else if (testSettings.provider === 'mistral') {
-      console.log('Using Mistral API');
       const { Mistral } = await import('@mistralai/mistralai');
       const mistral = new Mistral({ apiKey: testSettings.apiKey });
       await mistral.models.list();
     }
     res.json({ success: true });
   } catch (error: any) {
-    console.log('Test connection error:', error.message);
     res.json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/settings/clear', (req, res) => {
+  try {
+    settings.apiKey = '';
+    saveSettings(); // Persist the cleared settings to file
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error clearing settings:', error);
+    res.status(500).json({ error: 'Failed to clear settings' });
   }
 });
 
 // Helper function to handle different AI providers
 async function handleProviderChat(provider: string, apiKey: string, chatMessages: any[], systemPrompt: string, availableTools: any[], res: any) {
   if (provider === 'openai') {
-    console.log('Using OpenAI provider');
     const { OpenAI } = await import('openai');
     const openai = new OpenAI({ apiKey });
 
@@ -1480,7 +1486,6 @@ async function handleProviderChat(provider: string, apiKey: string, chatMessages
       }
     }
   } else if (provider === 'anthropic') {
-    console.log('Using Anthropic provider');
     const { Anthropic } = await import('@anthropic-ai/sdk');
     const anthropic = new Anthropic({ apiKey });
 
@@ -1548,7 +1553,6 @@ async function handleProviderChat(provider: string, apiKey: string, chatMessages
       }
     }
   } else if (provider === 'gemini') {
-    console.log('Using Gemini provider');
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
@@ -1609,7 +1613,6 @@ async function handleProviderChat(provider: string, apiKey: string, chatMessages
       }
     }
   } else if (provider === 'cohere') {
-    console.log('Using Cohere provider');
     const { CohereClient } = await import('cohere-ai');
     const cohere = new CohereClient({ token: apiKey });
 
@@ -1682,7 +1685,6 @@ async function handleProviderChat(provider: string, apiKey: string, chatMessages
       }
     }
   } else if (provider === 'mistral') {
-    console.log('Using Mistral provider');
     const { Mistral } = await import('@mistralai/mistralai');
     const mistral = new Mistral({ apiKey });
 
@@ -1766,20 +1768,15 @@ app.post('/api/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    console.log('Chat request received:', { messageCount: messages.length });
-    
     // Get available tools from MCP client
     let availableTools: any[] = [];
     if (mcpClient) {
       try {
         const tools = await mcpClient.rawClient.listTools();
         availableTools = tools.tools || [];
-        console.log(`Found ${availableTools.length} available tools`);
       } catch (error) {
         console.error('Failed to list tools:', error);
       }
-    } else {
-      console.log('No MCP client available');
     }
 
     // System prompt for Fly.io assistant
