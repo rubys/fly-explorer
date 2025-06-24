@@ -1839,8 +1839,8 @@ async function start() {
     const url = `http://localhost:${port}`;
     console.log(`Server running at ${url}`);
     
-    // Open browser automatically
-    if (process.env.NODE_ENV !== 'production') {
+    // Open browser automatically unless disabled
+    if (process.env.NO_BROWSER !== 'true') {
       try {
         const open = (await import('open')).default;
         // In dev mode with backend on 3001, open frontend on 3000

@@ -86,7 +86,7 @@ Run instantly without installation:
 npx @rubys/fly-explorer
 ```
 
-This will download and start Fly Explorer automatically. Open your browser to http://localhost:3001
+This will download and start Fly Explorer automatically. Your browser will open automatically to http://localhost:3001
 
 ### Global Installation
 
@@ -109,6 +109,9 @@ npx fly-explorer
 ### Prerequisites
 - Node.js (v18+)
 - flyctl binary available in system PATH ([install flyctl](https://fly.io/docs/hands-on/install-flyctl/))
+
+### Environment Variables
+- `NO_BROWSER=true` - Disable automatic browser opening on startup
 
 ## 🚦 Development Setup
 
